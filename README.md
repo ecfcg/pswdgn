@@ -19,6 +19,8 @@ OPTIONS:
                                        Default length is 8.
                                        Minimum length is 8.
                                        Maximum length is 255.
+    -s, --symbols <symbols>            Use symbols.
+                                       !@#$%^&*()\=+_-{}[]:`~|'"<>?;/.,
     -u, --usable <USABLE CHARACTER>    The category of characters to be used for the generated password.
                                            l : Lower case alphabets.
                                            u : Upper case alphabets.
