@@ -1,54 +1,59 @@
-pub mod character;
+pub(crate) mod character;
 pub mod cli;
-pub mod constants;
+pub mod error;
 
-use character::UsableCharacters;
-use rand::random;
+use self::character::CharSets;
+use self::error::Error;
 
-pub(crate) enum LengthErr {
-    OVER,
-    UNDER,
-}
+use rand::seq::SliceRandom;
 
-pub(crate) fn validate_length(length: i128) -> Result<(), LengthErr> {
-    if constants::MAX_LENGTH < length {
-        return Err(LengthErr::OVER);
-    }
-    if length < constants::MIN_LENGTH {
-        return Err(LengthErr::UNDER);
-    }
-    Ok(())
+pub(crate) const MIN_LENGTH: i128 = 8;
+pub(crate) const MAX_LENGTH: i128 = std::u8::MAX as i128;
+
+#[macro_export]
+macro_rules! symbols_all {
+    () => {
+        r##"!@#$%^&*()\=+_-{}[]:`~|'"<>?;/.,"##
+    };
 }
 
 pub struct Generator {
-    length: u8,
-    param: UsableCharacters,
+    length: usize,
+    usable: CharSets,
 }
 
 impl Generator {
-    pub fn new(length: u8, usable_code: usize, is_easy: bool) -> Self {
-        let checked_length = if length < 8 { 8 } else { length };
-
-        Generator {
-            length: checked_length,
-            param: UsableCharacters::new(usable_code, is_easy),
-        }
+    pub fn from_cli(
+        length: usize,
+        flag_str: String,
+        is_easy: bool,
+        symbols: String,
+    ) -> Result<Self, Error> {
+        Self::new(length, CharSets::from_cli(flag_str, is_easy, symbols)?)
     }
 
-    pub fn from_cli(command_line: cli::CommandLine) -> Self {
-        Self::new(
-            command_line.length,
-            command_line.usable_code,
-            command_line.is_easy,
-        )
+    pub fn from_code(
+        length: usize,
+        code: usize,
+        is_easy: bool,
+        symbols: String,
+    ) -> Result<Self, Error> {
+        Self::new(length, CharSets::from_code(code, is_easy, symbols)?)
+    }
+
+    fn new(length: usize, usable: CharSets) -> Result<Self, Error> {
+        Self::validate_length(length as i128)?;
+        Ok(Generator {
+            length: length,
+            usable: usable,
+        })
     }
 
     pub fn generate(self: &Self) -> String {
         let mut generated: String;
-
         loop {
             generated = self.generate_str();
-            if self.param.contains_all_usable_characters(&generated) {
+            if self.usable.exists_intersection(&generated) {
                 break;
             }
         }
@@ -56,17 +61,30 @@ impl Generator {
     }
 
     fn generate_str(self: &Self) -> String {
-        let chars = self
-            .param
-            .get_usable_characters()
-            .chars()
+        let characters = self
+            .usable
+            .characters()
+            .iter()
+            .map(|c| *c)
             .collect::<Vec<char>>();
-        let mut generated = String::with_capacity(self.length as usize);
-        for _i in 0..self.length {
-            let index = random::<usize>() % chars.len();
-            generated.push(chars[index]);
+        let mut rng = rand::thread_rng();
+        let mut s = String::with_capacity(self.length);
+
+        for _ in 0..self.length {
+            let c = characters.choose(&mut rng).unwrap();
+            s.push(*c);
         }
-        generated
+        s
+    }
+
+    pub(crate) fn validate_length(length: i128) -> Result<(), error::Error> {
+        if length < MIN_LENGTH {
+            Err(error::Error::LengthInsufficientErr(length))
+        } else if MAX_LENGTH < length {
+            Err(error::Error::LengthExcessErr(length))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -75,29 +93,80 @@ mod test {
     use super::*;
 
     #[test]
+    fn test_from_cli() {
+        let gen = Generator::from_cli(8, String::from("luns"), true, String::from("!@#$%"))
+            .ok()
+            .unwrap();
+        assert_eq!(gen.length, 8);
+        assert_eq!(
+            gen.usable,
+            CharSets::from_cli(String::from("luns"), true, String::from("!@#$%"))
+                .ok()
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn test_new() {
-        assert_eq!(Generator::new(7, 15, true).length, 8);
-        assert_eq!(Generator::new(8, 15, true).length, 8);
-        assert_eq!(Generator::new(9, 15, true).length, 9);
+        let gen = Generator::new(
+            8,
+            CharSets::from_cli(String::from("l"), false, String::default())
+                .ok()
+                .unwrap(),
+        )
+        .ok()
+        .unwrap();
+        assert_eq!(gen.length, 8);
+        assert_eq!(
+            gen.usable,
+            CharSets::from_cli(String::from("l"), false, String::default())
+                .ok()
+                .unwrap(),
+        );
     }
 
     #[test]
     fn test_generate() {
-        let generator = Generator::new(8, 7, true);
-        let result = generator.generate();
-        assert_eq!(result.len(), 8);
-        assert_eq!(
-            generator.param.contains_all_usable_characters(&result),
-            true
+        let gen = Generator::new(
+            8,
+            CharSets::from_cli(String::from("l"), false, String::default())
+                .ok()
+                .unwrap(),
         )
+        .ok()
+        .unwrap();
+        let result = gen.generate();
+        assert_eq!(result.len(), 8);
+        assert_eq!(gen.usable.exists_intersection(&result), true);
     }
 
     #[test]
     fn test_generate_str() {
-        let generator = Generator::new(10, 4, true);
-        let result = generator.generate();
+        let gen = Generator::new(
+            10,
+            CharSets::from_cli(String::from("l"), false, String::default())
+                .ok()
+                .unwrap(),
+        )
+        .ok()
+        .unwrap();
+        let result = gen.generate();
         assert_eq!(result.len(), 10);
-        assert_ne!(result, generator.generate());
-        assert_ne!(result, generator.generate());
+        assert_ne!(result, gen.generate());
+        assert_ne!(result, gen.generate());
+    }
+
+    #[test]
+    fn test_validate_length() {
+        assert_eq!(
+            Generator::validate_length(7),
+            Err(error::Error::LengthInsufficientErr(7))
+        );
+        assert_eq!(Generator::validate_length(8), Ok(()));
+        assert_eq!(Generator::validate_length(255), Ok(()));
+        assert_eq!(
+            Generator::validate_length(256),
+            Err(error::Error::LengthExcessErr(256))
+        );
     }
 }

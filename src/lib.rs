@@ -6,16 +6,12 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 
 pub extern "C" fn generate(length: usize, usable_code: usize, is_easy_code: usize) -> *mut c_char {
-    match generator::validate_length(length as i128) {
-        Ok(_) => (),
-        Err(_) => panic!("unsupported lunght: {}", length),
-    }
-
-    let validated_usable_code =
-        usable_code & generator::character::category::Category::all_flagged_code();
     let is_easy = is_easy_code & (1 as usize) == 1;
-
-    let generated = Generator::new(length as u8, validated_usable_code, is_easy).generate();
+    let generator = match Generator::from_code(length, usable_code, is_easy, String::default()) {
+        Ok(gen) => gen,
+        Err(e) => panic!("{}", e),
+    };
+    let generated = generator.generate();
     let cs = CString::new(generated).expect("CString::new failed");
     cs.into_raw()
 }
@@ -62,7 +58,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "unsupported lunght: 7")]
+    #[should_panic(expected = "7")]
     fn it_works_panic() {
         generate(7, 3, 0);
     }

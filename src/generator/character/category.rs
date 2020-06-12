@@ -1,230 +1,213 @@
-use super::constants;
+use crate::generator::error::Error;
+use std::collections::HashSet;
 
 /// Category of characters for generate password.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Category {
-    chars_all: &'static str,
+    pub(crate) chars_all: &'static str,
     chars_easy: &'static str,
-    pub flag: &'static str,
+    flag: char,
     code_point: usize,
 }
 
 /// Lower case alphabets.
 pub(crate) const LOWER: Category = Category {
-    chars_all: constants::LOWER_CHARS_ALL,
-    chars_easy: constants::LOWER_CHARS_EASY,
-    flag: constants::LOWER_FLAG,
+    chars_all: "abcdefghijklmnopqrstuvwxyz",
+    chars_easy: "abcdefghijkmnpqrstuvwxyz",
+    flag: 'l',
     code_point: 0,
 };
 
 /// Upper case alphabets.
 pub(crate) const UPPER: Category = Category {
-    chars_all: constants::UPPER_CHARS_ALL,
-    chars_easy: constants::UPPER_CHARS_EASY,
-    flag: constants::UPPER_FLAG,
+    chars_all: "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    chars_easy: "ABCDEFGHJKLMNPQRSTUVWXYZ",
+    flag: 'u',
     code_point: 1,
 };
 
 /// Numbers.
 pub(crate) const NUMBER: Category = Category {
-    chars_all: constants::NUMBER_CHARS_ALL,
-    chars_easy: constants::NUMBER_CHARS_EASY,
-    flag: constants::NUMBER_FLAG,
+    chars_all: "0123456789",
+    chars_easy: "23456789",
+    flag: 'n',
     code_point: 2,
 };
 
 /// Symbols.
 pub(crate) const SYMBOL: Category = Category {
-    chars_all: constants::SYMBOL_CHARS_ALL,
-    chars_easy: constants::SYMBOL_CHARS_EASY,
-    flag: constants::SYMBOL_FLAG,
+    chars_all: crate::symbols_all!(),
+    chars_easy: r##"!@#$%^&*=+~"<>?"##,
+    flag: 's',
     code_point: 3,
 };
 
-pub(crate) const ALL_CHARACTERS: [Category; 4] = [LOWER, UPPER, NUMBER, SYMBOL];
+const ALL_CHARACTERS: [Category; 4] = [LOWER, UPPER, NUMBER, SYMBOL];
 
 impl Category {
-    pub(crate) fn all_flags() -> String {
-        ALL_CHARACTERS.iter().map(|ct| ct.flag).collect::<String>()
+    pub(crate) fn from_cli(flag_str: String) -> Result<Vec<&'static Self>, Error> {
+        let v = Self::new(&|c| flag_str.contains(c.flag))?;
+        Ok(v)
     }
 
-    pub(crate) fn all_flagged_code() -> usize {
-        ALL_CHARACTERS
-            .iter()
-            .map(|ct| ct.code())
-            .fold(0, |acc, x| acc + x)
+    pub(crate) fn from_code(code: usize) -> Result<Vec<&'static Self>, Error> {
+        let v = Self::new(&|c| code & c.code() == c.code())?;
+        Ok(v)
     }
 
-    pub(crate) fn flags_to_code(flag_str: &String) -> Result<usize, String> {
-        if flag_str.is_empty() {
-            return Err(String::from("Argument is empty string."));
-        }
-
-        match Self::validate_flag(flag_str) {
-            Ok(_) => (),
-            Err(err_chars) => return Err(err_chars),
-        }
-
-        let code = ALL_CHARACTERS
-            .iter()
-            .map(|ct| ct.to_code(flag_str))
-            .fold(0, |acc, x| acc + x);
-
-        Ok(code)
-    }
-
-    pub(crate) fn validate_flag(flag_str: &String) -> Result<(), String> {
-        let all_flags = Self::all_flags();
-        let mut err_chars = String::with_capacity(flag_str.len());
-        for c in flag_str.chars() {
-            if !all_flags.contains(c) {
-                err_chars.push(c);
-            }
-        }
-        if err_chars.is_empty() {
-            Ok(())
+    fn new(p: &dyn Fn(&&Self) -> bool) -> Result<Vec<&'static Self>, Error> {
+        let categorys: Vec<&'static Self> = ALL_CHARACTERS.iter().filter(p).collect();
+        if categorys.is_empty() {
+            Err(Error::CharactersErr(()))
         } else {
-            Err(err_chars)
+            Ok(categorys)
         }
     }
 
-    pub(crate) fn validate_code(code: usize) -> Result<(), String> {
-        let max = Self::all_flagged_code();
-        if code < 1 || max < code {
-            Err(format!("Code out of range :{}", code))
-        } else {
-            Ok(())
-        }
-    }
-
-    pub(crate) fn get_character(self: &Self, is_easy: bool) -> String {
-        if is_easy {
-            String::from(self.chars_easy)
-        } else {
-            String::from(self.chars_all)
-        }
-    }
-
-    fn to_code(self: &Self, flags: &String) -> usize {
-        if flags.contains(self.flag) {
-            self.code()
-        } else {
-            0
-        }
+    pub(crate) fn flags() -> String {
+        ALL_CHARACTERS.iter().map(|c| c.flag).collect()
     }
 
     fn code(self: &Self) -> usize {
         1 << self.code_point
     }
 
-    pub(crate) fn is_flagged(self: &Self, code: usize) -> bool {
-        code & self.code() == self.code()
+    pub(crate) fn char_set(self: &Self, is_easy: bool, symbols: &String) -> HashSet<char> {
+        let characters = if SYMBOL == *self && !symbols.is_empty() {
+            symbols
+        } else if is_easy {
+            self.chars_easy
+        } else {
+            self.chars_all
+        };
+
+        characters.chars().into_iter().collect()
     }
 
-    pub(crate) fn exists_intersection(self: &Self, is_easy: bool, s: &String) -> bool {
-        for c in self.get_character(is_easy).chars() {
-            if s.contains(c) {
-                return true;
-            }
+    pub(crate) fn validate_flag(frag_str: &String) -> Result<(), Error> {
+        let flags = Self::flags();
+        let errors: String = frag_str
+            .chars()
+            .into_iter()
+            .filter(|f| !flags.contains(*f))
+            .collect();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(Error::CategoryFlagErr(errors))
         }
-        false
+    }
+
+    pub(crate) fn validate_symbols(symbols: &String) -> Result<(), Error> {
+        let symbol_all = SYMBOL.chars_all;
+        let errors: String = symbols
+            .chars()
+            .into_iter()
+            .filter(|s| !symbol_all.contains(*s))
+            .collect();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(Error::NotSymbolErr(errors))
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::iter::FromIterator;
 
     #[test]
-    fn test_all_flags() {
-        assert_eq!(Category::all_flags(), String::from("luns"));
-    }
-
-    #[test]
-    fn test_all_flagged_code() {
-        assert_eq!(Category::all_flagged_code(), 15 as usize);
-    }
-
-    #[test]
-    fn test_flags_to_code() {
+    fn test_from_cli() {
         assert_eq!(
-            Category::flags_to_code(&String::from("luns")),
-            Ok(15 as usize)
+            Category::from_cli(String::from("luns")).ok().unwrap(),
+            vec![&LOWER, &UPPER, &NUMBER, &SYMBOL]
         );
+
         assert_eq!(
-            Category::flags_to_code(&String::from("anbscd")),
-            Err(String::from("abcd"))
-        );
-        assert_eq!(
-            Category::flags_to_code(&String::from("")),
-            Err(String::from("Argument is empty string."))
+            Category::from_cli(String::from("")).err().unwrap(),
+            Error::CharactersErr(())
         );
     }
 
     #[test]
-    fn test_assert_code() {
-        assert_eq!(Category::validate_code(1), Ok(()));
-        assert_eq!(Category::validate_code(15), Ok(()));
+    fn test_from_code() {
         assert_eq!(
-            Category::validate_code(0),
-            Err(String::from("Code out of range :0"))
+            Category::from_code(15).ok().unwrap(),
+            vec![&LOWER, &UPPER, &NUMBER, &SYMBOL]
         );
+
         assert_eq!(
-            Category::validate_code(16),
-            Err(String::from("Code out of range :16"))
+            Category::from_code(0).err().unwrap(),
+            Error::CharactersErr(())
         );
     }
 
     #[test]
-    fn test_get_character() {
-        assert_eq!(LOWER.get_character(true), LOWER.chars_easy);
-        assert_eq!(LOWER.get_character(false), LOWER.chars_all);
+    fn test_new() {
+        assert_eq!(
+            Category::new(&|_| true).ok().unwrap(),
+            vec![&LOWER, &UPPER, &NUMBER, &SYMBOL]
+        );
+
+        assert_eq!(
+            Category::new(&|_| false).err().unwrap(),
+            Error::CharactersErr(())
+        );
     }
 
     #[test]
-    fn test_to_code() {
-        assert_eq!(
-            LOWER.to_code(&String::from(constants::LOWER_FLAG)),
-            LOWER.code()
-        );
-        assert_eq!(
-            UPPER.to_code(&String::from(constants::UPPER_FLAG)),
-            UPPER.code()
-        );
-        assert_eq!(
-            NUMBER.to_code(&String::from(constants::NUMBER_FLAG)),
-            NUMBER.code()
-        );
-        assert_eq!(
-            SYMBOL.to_code(&String::from(constants::SYMBOL_FLAG)),
-            SYMBOL.code()
-        );
-        assert_eq!(
-            LOWER.to_code(&String::from(constants::SYMBOL_FLAG)),
-            0 as usize
-        );
+    fn test_flags() {
+        assert_eq!(Category::flags(), "luns");
     }
 
     #[test]
     fn test_code() {
-        assert_eq!(LOWER.code(), 1 as usize);
-        assert_eq!(UPPER.code(), 2 as usize);
-        assert_eq!(NUMBER.code(), 4 as usize);
-        assert_eq!(SYMBOL.code(), 8 as usize);
+        assert_eq!(LOWER.code(), 1);
+        assert_eq!(UPPER.code(), 2);
+        assert_eq!(NUMBER.code(), 4);
+        assert_eq!(SYMBOL.code(), 8);
     }
 
     #[test]
-    fn test_is_flagged() {
-        assert_eq!(LOWER.is_flagged(LOWER.code()), true);
-        assert_eq!(UPPER.is_flagged(UPPER.code()), true);
-        assert_eq!(NUMBER.is_flagged(NUMBER.code()), true);
-        assert_eq!(SYMBOL.is_flagged(SYMBOL.code()), true);
-        assert_eq!(LOWER.is_flagged(SYMBOL.code()), false);
+    fn test_char_set() {
+        assert_eq!(
+            LOWER.char_set(true, &String::default()),
+            HashSet::from_iter(LOWER.chars_easy.chars())
+        );
+        assert_eq!(
+            LOWER.char_set(false, &String::from("!@#$%")),
+            HashSet::from_iter(LOWER.chars_all.chars())
+        );
+        assert_eq!(
+            SYMBOL.char_set(true, &String::default()),
+            HashSet::from_iter(SYMBOL.chars_easy.chars())
+        );
+        assert_eq!(
+            SYMBOL.char_set(false, &String::from("!@#$%")),
+            HashSet::from_iter("!@#$%".chars())
+        );
     }
 
     #[test]
-    fn test_exists_intersection() {
-        assert_eq!(LOWER.exists_intersection(true, &String::from("a")), true);
-        assert_eq!(LOWER.exists_intersection(true, &String::from("A")), false);
+    fn test_validate_flag() {
+        assert_eq!(Category::validate_flag(&Category::flags()), Ok(()));
+        assert_eq!(
+            Category::validate_flag(&String::from("abcs")),
+            Err(Error::CategoryFlagErr(String::from("abc")))
+        );
+    }
+
+    #[test]
+    fn test_validate_symbols() {
+        assert_eq!(
+            Category::validate_symbols(&String::from(SYMBOL.chars_all)),
+            Ok(())
+        );
+        assert_eq!(
+            Category::validate_symbols(&String::from("a!@b#$%cs")),
+            Err(Error::NotSymbolErr(String::from("abcs")))
+        );
     }
 }

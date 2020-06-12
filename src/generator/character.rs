@@ -1,40 +1,47 @@
-use self::category::{Category, ALL_CHARACTERS};
-use super::constants;
+mod category;
 
-pub mod category;
+pub(crate) use self::category::Category;
+use crate::generator::error::Error;
+use std::collections::HashSet;
 
-pub struct UsableCharacters {
-    usable_code: usize,
-    is_easy: bool,
+#[derive(Debug, PartialEq)]
+pub(crate) struct CharSets {
+    char_sets: Vec<HashSet<char>>,
 }
 
-impl UsableCharacters {
-    pub(crate) fn new(usable_code: usize, is_easy: bool) -> Self {
-        match Category::validate_code(usable_code) {
-            Ok(_) => (),
-            Err(s) => panic!(s),
-        }
+impl CharSets {
+    pub(crate) fn from_cli(
+        flag_str: String,
+        is_easy: bool,
+        symbols: String,
+    ) -> Result<Self, Error> {
+        Ok(Self::new(Category::from_cli(flag_str)?, is_easy, symbols))
+    }
 
-        UsableCharacters {
-            usable_code: usable_code,
-            is_easy: is_easy,
+    pub(crate) fn from_code(code: usize, is_easy: bool, symbols: String) -> Result<Self, Error> {
+        Ok(Self::new(Category::from_code(code)?, is_easy, symbols))
+    }
+
+    fn new(char_sets: Vec<&'static Category>, is_easy: bool, symbols: String) -> Self {
+        CharSets {
+            char_sets: char_sets
+                .iter()
+                .map(|cs| cs.char_set(is_easy, &symbols))
+                .collect(),
         }
     }
 
-    pub(crate) fn get_usable_characters(self: &Self) -> String {
-        ALL_CHARACTERS
+    pub(crate) fn characters(self: &Self) -> HashSet<char> {
+        self.char_sets
             .iter()
-            .filter(|ct| ct.is_flagged(self.usable_code))
-            .map(|ct| ct.get_character(self.is_easy))
-            .collect::<String>()
+            .flat_map(|c| c.iter())
+            .map(|c| *c)
+            .collect()
     }
 
-    pub(crate) fn contains_all_usable_characters(self: &Self, s: &String) -> bool {
-        ALL_CHARACTERS
-            .iter()
-            .filter(|ct| ct.is_flagged(self.usable_code))
-            .map(|ct| ct.exists_intersection(self.is_easy, s))
-            .fold(true, |acc, x| acc && x)
+    pub(crate) fn exists_intersection(self: &Self, str: &String) -> bool {
+        let c_set = str.chars().into_iter().collect();
+        self.char_sets.iter().all(|c| !c.is_disjoint(&c_set))
     }
 }
 
@@ -43,38 +50,70 @@ mod test {
     use super::*;
 
     #[test]
+    fn test_from_cli() {
+        let cs = CharSets::from_cli(String::from("luns"), true, String::from("!@#$%"))
+            .ok()
+            .unwrap();
+        assert_eq!(
+            cs.char_sets,
+            vec![
+                category::LOWER.char_set(true, &String::default()),
+                category::UPPER.char_set(true, &String::default()),
+                category::NUMBER.char_set(true, &String::default()),
+                category::SYMBOL.char_set(true, &String::from("!@#$%")),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_from_code() {
+        let cs = CharSets::from_code(15, true, String::from("!@#$%"))
+            .ok()
+            .unwrap();
+        assert_eq!(
+            cs.char_sets,
+            vec![
+                category::LOWER.char_set(true, &String::default()),
+                category::UPPER.char_set(true, &String::default()),
+                category::NUMBER.char_set(true, &String::default()),
+                category::SYMBOL.char_set(true, &String::from("!@#$%")),
+            ]
+        );
+    }
+
+    #[test]
     fn test_new() {
-        let result = UsableCharacters::new(15, true);
-        assert_eq!(result.usable_code, 15);
-        assert_eq!(result.is_easy, true);
-    }
-
-    #[test]
-    #[should_panic(expected = "Code out of range :16")]
-    fn test_new_panic() {
-        UsableCharacters::new(16, true);
-    }
-
-    #[test]
-    fn test_get_usable_characters() {
+        let cs = CharSets::new(vec![&category::LOWER], false, String::default());
         assert_eq!(
-            UsableCharacters::new(3, false).get_usable_characters(),
-            format!(
-                "{}{}",
-                constants::LOWER_CHARS_ALL,
-                constants::UPPER_CHARS_ALL
-            )
+            cs.char_sets,
+            vec![category::LOWER.char_set(false, &String::default())]
         );
     }
 
     #[test]
-    fn test_contains_all_usable_characters() {
-        assert_eq!(
-            UsableCharacters::new(15, false).contains_all_usable_characters(&String::from("aB3$")),
-            true
-        );assert_eq!(
-            UsableCharacters::new(15, true).contains_all_usable_characters(&String::from("aB0$")),
-            false
+    fn test_characters() {
+        let cs = CharSets::new(
+            vec![&category::LOWER, &category::UPPER],
+            false,
+            String::default(),
         );
+        assert_eq!(
+            cs.characters(),
+            (&category::LOWER.char_set(false, &String::default())
+                | &category::UPPER.char_set(false, &String::default()))
+        );
+    }
+
+    #[test]
+    fn test_exists_intersection() {
+        let cs = CharSets::new(
+            vec![&category::LOWER, &category::UPPER],
+            false,
+            String::default(),
+        );
+        assert_eq!(cs.exists_intersection(&String::from("aA1!")), true);
+        assert_eq!(cs.exists_intersection(&String::from("a1!")), false);
+        assert_eq!(cs.exists_intersection(&String::from("A1!")), false);
+        assert_eq!(cs.exists_intersection(&String::from("1!")), false);
     }
 }

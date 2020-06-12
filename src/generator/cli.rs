@@ -1,12 +1,11 @@
 use clap::{App, Arg};
 
-use super::character::category::Category;
-use super::constants::{MAX_LENGTH, MIN_LENGTH};
-use super::LengthErr;
+use crate::generator::{character::Category, error::Error, Generator, MAX_LENGTH, MIN_LENGTH};
 
 const OPTION_LENGTH: &str = "length";
 const OPTION_USABLE: &str = "usable";
 const OPTION_IS_EASY: &str = "is_easy";
+const OPTION_SYMBOLS: &str = "symbols";
 
 const HELP_LENGTH: &str = "\
 Length of generated password string.
@@ -24,6 +23,8 @@ The category of characters to be used for the generated password.
 const HELP_IS_EASY: &str = "
 Use easy to identify characters.
 ";
+
+const HELP_SYMBOLS: &str = concat!("Use symbols.\n", crate::symbols_all!());
 
 pub fn build() -> App<'static, 'static> {
     App::new(clap::crate_name!())
@@ -58,6 +59,15 @@ pub fn build() -> App<'static, 'static> {
                 .multiple(false)
                 .help(HELP_IS_EASY),
         )
+        .arg(
+            Arg::with_name(OPTION_SYMBOLS)
+                .short("s")
+                .long(OPTION_SYMBOLS)
+                .takes_value(true)
+                .multiple(false)
+                .validator(validate_symbols)
+                .help(HELP_SYMBOLS),
+        )
 }
 
 fn validate_length(value: String) -> Result<(), String> {
@@ -65,11 +75,14 @@ fn validate_length(value: String) -> Result<(), String> {
         Ok(x) => x,
         Err(_) => return Err(format!("Not number value: {}", value)),
     };
-    match super::validate_length(val) {
+    match Generator::validate_length(val) {
         Ok(_) => Ok(()),
         Err(e) => match e {
-            LengthErr::OVER => Err(format!("Needs {} or less: {}", MAX_LENGTH, val)),
-            LengthErr::UNDER => Err(format!("Needs {} or more: {}", MIN_LENGTH, val)),
+            Error::CategoryFlagErr(_) | Error::NotSymbolErr(_) | Error::CharactersErr(_) => Ok(()),
+            Error::LengthExcessErr(_) => Err(format!("Needs {} or less: {}", MAX_LENGTH, val)),
+            Error::LengthInsufficientErr(_) => {
+                Err(format!("Needs {} or more: {}", MIN_LENGTH, val))
+            }
         },
     }
 }
@@ -81,10 +94,18 @@ fn validate_usable(value: String) -> Result<(), String> {
     }
 }
 
+fn validate_symbols(value: String) -> Result<(), String> {
+    match Category::validate_symbols(&value) {
+        Ok(_) => Ok(()),
+        Err(cs) => Err(format!("unknown symbol character: {}", cs)),
+    }
+}
+
 pub struct CommandLine {
-    pub(crate) length: u8,
-    pub(crate) usable_code: usize,
-    pub(crate) is_easy: bool,
+    pub length: usize,
+    pub flags: String,
+    pub is_easy: bool,
+    pub symbols: String,
 }
 
 impl CommandLine {
@@ -92,20 +113,26 @@ impl CommandLine {
         let arg_matches = app.get_matches();
         let length = match arg_matches.value_of(OPTION_LENGTH) {
             Some(l) => l.parse().unwrap(),
-            None => 8,
+            None => MIN_LENGTH as usize,
         };
 
-        let usable_code = match arg_matches.value_of(OPTION_USABLE) {
-            Some(f) => Category::flags_to_code(&String::from(f)).unwrap(),
-            None => Category::all_flagged_code(),
+        let flags = match arg_matches.value_of(OPTION_USABLE) {
+            Some(f) => String::from(f),
+            None => Category::flags(),
         };
 
         let is_easy = arg_matches.is_present(OPTION_IS_EASY);
 
+        let symbols = match arg_matches.value_of(OPTION_SYMBOLS) {
+            Some(s) => String::from(s),
+            None => String::default(),
+        };
+
         CommandLine {
             length: length,
-            usable_code: usable_code,
+            flags: flags,
             is_easy: is_easy,
+            symbols: symbols,
         }
     }
 }
